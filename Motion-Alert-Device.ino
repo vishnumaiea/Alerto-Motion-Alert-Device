@@ -6,31 +6,40 @@
 //  Filename : Motion-Alert-Device.ino                                          //
 //  Description : Arduino sketch file.                                          //
 //  Author : Vishnu M Aiea                                                      //
-//  Version : 1                                                               //
-//  Initial Release : -                                                         //
+//  Version : 1.0.1                                                             //
+//  Initial Release : - 04:17 PM 02-03-2020, Monday                             //
+//  Project page : https://www.hackster.io/vishnumaiea/f7323c                   //
 //  License : MIT                                                               //
 //                                                                              //
 //  Last Modified : 11:16 PM 17-02-2020, Monday                                 //
 //                                                                              //
 //==============================================================================//
+
+//due to time constraints I could not include all documentation in the project
+//page, like setting time etc. hope my comments here can help you understand
+//the code
+
+//==============================================================================//
 //includes
 
 #include <WiFi.h>
-#include <ISL1208_RTC.h>
+#include <ISL1208_RTC.h>  //search on Arduino IDE for this library and install it
 #include "soc/timer_group_struct.h"
 #include "soc/timer_group_reg.h"
 
 //==============================================================================//
 //defines
 
-#define TIME_WINDOW 1000
-#define MOTION_THRESHOLD 20
+#define TIME_WINDOW       1000  //time window within which multiple pulses are ignored
+#define MOTION_THRESHOLD  20    //how many motion you want to detect before triggering notification event
 
-#define gpsPort Serial1
-#define gsmPort Serial2
+//serial ports
+#define gpsPort Serial1 //hardware serial port for GPS
+#define gsmPort Serial2 //hardware serial port for GSM
+#define debugPort Serial  //this is the ESP32's default serial port
 
-#define DEFAULT_GSM_BAUD 115200
-
+//gsm specific parameters
+#define DEFAULT_GSM_BAUD 115200 //gsm module baud rate
 #define CRLF_ON         //comment if you do not want to terminate commands with <CRLF>
 #define CARRIAGE_RETURN 0x0D
 #define NEWLINE         0x0A
@@ -41,14 +50,14 @@
 #define OP_NOTOK     101  //operation not okay
 #define OP_TIMEOUT   103  //operation times out
 
+//debug flags
 #define GPS_DEBUG
 #define GSM_DEBUG
 #define RTC_DEBUG
 #define WIFI_DEBUG
 #define GLOBAL_DEBUG
 
-#define debugPort Serial
-
+//pins
 #define BATTERY_PIN 19
 #define SWITCH_PIN  5
 #define LED_R_PIN 0
@@ -57,29 +66,37 @@
 #define PIR_PIN 4
 #define REED_PIN 18
 
+//led states
 #define ON 1
 #define OFF 0
 
-#define R 1
-#define G 2
-#define B 3
+//led colors
+#define R 1 //red
+#define G 2 //green
+#define B 3 //blue
 #define RGB 4
 
 //==============================================================================//
 //globals
 
-uint32_t pulseCount = 0;
-uint32_t pulseCountTotal = 0;
-uint32_t lastEvent = 0;
-uint32_t elapsedTime = 0;
+uint32_t pulseCount = 0;  //all pulses coming out from PIR
+uint32_t pulseCountTotal = 0; //total pulses detected
+uint32_t lastEvent = 0; //last time point a pulse was detected
+uint32_t elapsedTime = 0; //returned by millis()
 
-//PushingBox scenario DeviceId code and API
+//-----------------------------------------------------------------------------//
+//create a custom scenario in Pushing box and paste the deviceID and API
+
 String deviceId = "vC75E90DC5352BFE";
 const char* logServer = "api.pushingbox.com";
 
+//-----------------------------------------------------------------------------//
 //Wi-Fi credentials
-const char* ssid = "Magnimous";
-const char* password = "Magcompany1$";
+
+const char* ssid = "<Your Hostspot Name>";
+const char* password = "<Your Hotspot Password>";
+
+//-----------------------------------------------------------------------------//
 
 //RTC object
 ISL1208_RTC myRtc = ISL1208_RTC();
@@ -93,14 +110,17 @@ String gsmReply = ""; //response from GSM module
 int gsmBaud = DEFAULT_GSM_BAUD; //GSM module baud rate
 bool simStatus = false;   //if SIM available or not
 
-String locationString = "NULL";
-String lastLocationString = "NULL";
-bool locationSet = false;
+String locationString = "NULL"; //current location in latitude and longitude
+String lastLocationString = "NULL"; //last known location
+bool locationSet = false; //whether a location fix was acquired
 bool notificationTrigger = false;
 bool smsNotification = false;
-bool enableNotification = true;
+bool enableNotification = true; //enable or disable motion notification
 bool enableGlobalLED = false;
-uint8_t ledArray[3] = {0};
+uint8_t ledArray[3] = {0};  //RGB led status array
+
+//==============================================================================//
+//function protos
 
 void IRAM_ATTR countUp();
 
@@ -109,8 +129,9 @@ void IRAM_ATTR countUp();
 
 void setup() {
   debugPort.begin(115200);
-  Wire.begin();
+  Wire.begin(); //initialize I2C
   myRtc.begin();  //initialize RTC
+
   debugPort.println();
   debugPort.println("===========================================");
   debugPort.println("                Alerto!");
@@ -119,32 +140,43 @@ void setup() {
   debugPort.println("===========================================");
   debugPort.println();
   debugPort.println("Type \"cmd\" to enter command mode.");
+
   pinMode(BATTERY_PIN, INPUT);  //1.5V battery input
   pinMode(PIR_PIN, INPUT);  //PIR input
   pinMode(SWITCH_PIN, INPUT);  //Switch
   pinMode(LED_R_PIN, OUTPUT); //LED
   pinMode(LED_G_PIN, OUTPUT); //LED
   pinMode(LED_B_PIN, OUTPUT); //LED
-  pinMode(REED_PIN, INPUT);
-  gpsPort.begin(9600, SERIAL_8N1, 14, 15);  //RX, TX
-  gsmPort.begin(DEFAULT_GSM_BAUD, SERIAL_8N1, 16, 17);
+  pinMode(REED_PIN, INPUT); //reed switch
 
-  led(G, OFF);
+  gpsPort.begin(9600, SERIAL_8N1, 14, 15);  //RX, TX
+  gsmPort.begin(DEFAULT_GSM_BAUD, SERIAL_8N1, 16, 17);  //RX, TX
+
+  led(G, OFF);  //turn off green and blue LEDs
   led(B, OFF);
 
-  if(digitalRead(BATTERY_PIN) == HIGH) {
+  //check statuses of battery and spdt switch
+  if(digitalRead(BATTERY_PIN) == HIGH) {  //check if secondary AA battery is present
     debugPort.println("Battery not found. LED_R will be OFF.");
-    enableGlobalLED = false;
+    enableGlobalLED = false;  //disable all LEDs
     led(RGB, OFF);
   }
   else {
-    debugPort.println("Battery found. LED_R will be ON.");
-    enableGlobalLED = true;
-    led(R, ON);
-    led(G, OFF);
-    led(B, OFF);
+    if(digitalRead(SWITCH_PIN) == LOW)  {
+      debugPort.println("Battery found. Switch is ON. LED_R is ON.");
+      enableGlobalLED = true; //enable LEDs
+      led(R, ON);
+      led(G, OFF);
+      led(B, OFF);
+    }
+    else {
+      debugPort.println("Battery found. Switch is OFF. LED_R is OFF.");
+      enableGlobalLED = false;  //disable LEDs
+      led(RGB, OFF);
+    } 
   }
 
+  //check status of reed switch
   if(digitalRead(REED_PIN) == LOW) {
     enableNotification = false;
     debugPort.println();
@@ -155,10 +187,12 @@ void setup() {
     debugPort.println("Notifications are enabled.");
   }
 
+  //to set time use the command mode by sending "cmd"
+  //"settime T20022810304213# "will set time
   if(myRtc.isRtcActive()) {
     debugPort.println();
     debugPort.println("RTC found on the bus.");
-    myRtc.setTime("T20022810304213#");  //send the time update string
+    myRtc.setTime("T20022810304213#");  //sample time update string
   }
 
   debugPort.println();
@@ -166,6 +200,8 @@ void setup() {
   debugPort.println();
   gsmInitialize();
 
+
+  //create freeRTOS tasks
   xTaskCreatePinnedToCore(
                     gpsTask,   //Function to implement the task
                     "gpsTask", //Name of the task
@@ -184,7 +220,8 @@ void setup() {
                     NULL,         //Task handle.
                     0);           //Core where the task should run
 
-  attachInterrupt(PIR_PIN, countUp, RISING);
+  //attach interrupts
+  attachInterrupt(PIR_PIN, countUp, RISING);  //isr is executed for all rising edge of pulses
   attachInterrupt(SWITCH_PIN, switchInterrupt, CHANGE);
   attachInterrupt(BATTERY_PIN, batteryInterrupt, CHANGE);
   attachInterrupt(REED_PIN, reedInterrupt, CHANGE);
@@ -194,12 +231,13 @@ void setup() {
 //infinite loop
 
 void loop() {
+  //check if motion status is above the threshold
   if(pulseCount >= MOTION_THRESHOLD) {
       debugPort.println("Motion activity detected.");
       debugPort.print("Total Activity Detected : ");
       debugPort.println(pulseCountTotal);
-    if(enableNotification) {
-      detachInterrupt(4);
+    if(enableNotification) {  //only when enabled, or reed switch is open
+      detachInterrupt(PIR_PIN); //do not detect motion while proceesing is going on
       debugPort.println();
       debugPort.println("Notifications are enabled.");
       debugPort.println("Sending notification..");
@@ -211,44 +249,47 @@ void loop() {
       debugPort.print(lastLocationString);
       debugPort.println();
       debugPort.println();
-      int status = sendNotification();
+      int status = sendNotification();  //send notification via internet
 
-      if(status != 0) {
+      if(status != 0) { //check is it was a success
         debugPort.println();
         debugPort.println("Sending notification failed!");
         debugPort.println("Trying to send SMS..");
-        smsNotification = true;
+        smsNotification = true; //send sms if it was not
       }
-      pulseCount = 0;
-      attachInterrupt(4, countUp, RISING);
+      pulseCount = 0; //reset pulse count so that we can count from fresh
+      attachInterrupt(PIR_PIN, countUp, RISING);  //re-attach interrupt
     }
-    else {
+    else {  //do nothing if notification are disabled
       debugPort.println("Notifications are disabled.");
     }
   }
 
   //------------------------------------------------------------------------------//
+  //check serial ports for command inputs
 
   if(debugPort.available() > 0) {
     bool cmdMode = false;
     String inputString = "";
 
     inputString = debugPort.readString();  //read the contents of serial buffer as string
-    if(inputString.indexOf("cmd") > -1) {
-      detachInterrupt(4);
+    if(inputString.indexOf("cmd") > -1) { //check is it does have "cmd" in it
+      detachInterrupt(PIR_PIN); //no need to detect motion in command mode
       debugPort.println();
       debugPort.println("Command mode activated.");
       inputString = "";
       cmdMode = true;
     }
 
-    while(cmdMode) {
+    //continuously monitor serial port
+    while(cmdMode) {  //until when command mode is deactivated
+      //this is to feed the watchdog timer
       TIMERG0.wdt_wprotect=TIMG_WDT_WKEY_VALUE;
       TIMERG0.wdt_feed=1;
       TIMERG0.wdt_wprotect=0;
 
       if(debugPort.available() > 0) {
-        String commandString = "";
+        String commandString = "";  //initialize strings
         String firstParam = "";
         String secondParam = "";
         String thirdParam = "";
@@ -310,15 +351,23 @@ void loop() {
 
         debugPort.println();
 
+        //-------------------------------------------------------------------------//
+        //commands and their actions
+        //add any of your custom commands here
+        //commands and parameters are separated by whitespace
+        //you can send up to 3 parameters
+
         if(commandString == "exit") {
           debugPort.println("Exiting command mode.");
           cmdMode = false;
         }
 
+        //prints time
         else if(commandString == "time") {
           debugPort.println(myRtc.getTimeDateDayString());
         }
 
+        //sets time. send valid time string as first parameter
         else if(commandString == "settime") {
           myRtc.setTime(firstParam);
         }
@@ -330,10 +379,12 @@ void loop() {
           debugPort.println(lastLocationString);
         }
 
+        //test the push notification
         else if(commandString == "push") {
           sendNotification();
         }
 
+        //test sms
         else if(commandString == "sms") {
           if(firstParam.length() > 0) {
             sendSMS(firstParam);
@@ -343,6 +394,7 @@ void loop() {
           }
         }
         
+        //turns on the red LED. 1 = ON,, everything else = OFF
         else if(commandString == "ledr") {
           if(firstParam == "1") {
             led(R, ON);
@@ -352,6 +404,7 @@ void loop() {
           }
         }
 
+        //turns on the green LED. 1 = ON,, everything else = OFF
         else if(commandString == "ledg") {
           if(firstParam == "1") {
             led(G, ON);
@@ -361,6 +414,7 @@ void loop() {
           }
         }
 
+        //turns on the blue LED. 1 = ON,, everything else = OFF
         else if(commandString == "ledb") {
           if(firstParam == "1") {
             led(B, ON);
@@ -370,18 +424,20 @@ void loop() {
           }
         }
 
+        //override global LED flag
         else if(commandString == "enableled") {
           debugPort.println("Global LED notifications are enabled.");
           enableGlobalLED = true;
         }
 
+        //unknown commands
         else {
           debugPort.println("Unknown command. Send \"exit\" command mode.");
           inputString = "";
         }
       }
     }
-    attachInterrupt(4, countUp, RISING);
+    attachInterrupt(PIR_PIN, countUp, RISING);  //re-enable interrupt at exit
   }
 }
 
@@ -389,16 +445,19 @@ void loop() {
 //counts the pulses from PIR at every rising edge
 
 void IRAM_ATTR countUp() {
-  elapsedTime = millis();
-  if((elapsedTime - lastEvent) > TIME_WINDOW) {
-    pulseCount++;
-    pulseCountTotal++;
-    lastEvent = elapsedTime;
+  elapsedTime = millis(); //save the current elapsed time
+  if((elapsedTime - lastEvent) > TIME_WINDOW) { //compare that against last event time
+    pulseCount++; //this is more like a motion count since we are not counting all the pulses
+    pulseCountTotal++;  //hisstorical count
+    lastEvent = elapsedTime;  //save the time point of this trigger event
     // debugPort.println(pulseCount);
   }
 }
 
 //==============================================================================//
+//turns LEDs ON/OFF
+//color can be R, G, B, or RGB
+//status can be ON or OFF
 
 void led(int color, int status) {
   if(enableGlobalLED) {
@@ -498,10 +557,11 @@ void led(int color, int status) {
 }
 
 //==============================================================================//
+//triggered when reed switch state is changed, or when you bring a magnet near to the reed switch
 
 void reedInterrupt() {
-  vTaskDelay(100 / portTICK_PERIOD_MS);
-  if(digitalRead(REED_PIN) == LOW) {
+  vTaskDelay(100 / portTICK_PERIOD_MS); //wait for 100ms
+  if(digitalRead(REED_PIN) == LOW) {  //this is an active low input
     enableNotification = false;
     debugPort.println();
     debugPort.println("Notifications are disabled.");
@@ -513,9 +573,14 @@ void reedInterrupt() {
   }
 }
 
+//==============================================================================//
+//spdt switch interrupt
+//turning this switch ON simply turns on red LED and all other LED notifications
+//the intruder would mistake it for a power ON/OFF switch
+
 void switchInterrupt() {
   // vTaskDelay(100 / portTICK_PERIOD_MS);
-  if(digitalRead(SWITCH_PIN) == LOW) {
+  if(digitalRead(SWITCH_PIN) == LOW) {  //active low
     debugPort.println("Switch turned ON.");
     if(digitalRead(BATTERY_PIN) == LOW) {  //if battery is present
       debugPort.println("LED is ON.");
@@ -537,11 +602,12 @@ void switchInterrupt() {
 }
 
 //==============================================================================//
+//triggered when AA secondary battery is inserted or removed
 
 void batteryInterrupt() {
   // vTaskDelay(100 / portTICK_PERIOD_MS);
-  if(digitalRead(BATTERY_PIN) == LOW) {
-    enableGlobalLED = true;
+  if(digitalRead(BATTERY_PIN) == LOW) { //active low
+    enableGlobalLED = true; //enable all LEDs
     if(digitalRead(SWITCH_PIN) == LOW) {
       debugPort.println("Switch is ON.");
       debugPort.println("LED is ON.");
@@ -564,11 +630,12 @@ void batteryInterrupt() {
 }
 
 //==============================================================================//
+//infinite loop for processing AT commands
 
 void gsmTask(void* pvParameters) {
   while(1) {
     vTaskDelay(10 / portTICK_PERIOD_MS);
-    if(smsNotification) {
+    if(smsNotification) { //send SMS when notification is triggered
       String smsString;
       smsString = "Alerto! ";
       smsString += String(pulseCount);
@@ -597,26 +664,26 @@ void gsmTask(void* pvParameters) {
 void gpsTask(void* pvParameters) {
   char gpsBuffer[600] = {0};
 
-  while(1) {
+  while(1) {  //infinite loop
     vTaskDelay(10 / portTICK_PERIOD_MS);
     if(gpsPort.available()) {
-      gpsPort.readBytes(gpsBuffer, 600);
+      gpsPort.readBytes(gpsBuffer, 600);  //read 600 bytes
       String gpsString = String(gpsBuffer);
-      int gprmcIndex = gpsString.indexOf("GPRMC");
+      int gprmcIndex = gpsString.indexOf("GPRMC");  //find GPRMC header
       if(gprmcIndex > -1) {
-        int delimiterIndex = gpsString.indexOf('*', gprmcIndex);
+        int delimiterIndex = gpsString.indexOf('*', gprmcIndex);  //extract GPRMC sentence
         gpsString = gpsString.substring(gprmcIndex, delimiterIndex);
-        if(gpsString.endsWith("A")) {
+        if(gpsString.endsWith("A")) { //if the sentence has valid coordinates
           int commaPos[12] = {0};
           int commaCount = 0;
-          for(int i=0; i<gpsString.length(); i++) {
+          for(int i=0; i<gpsString.length(); i++) { //count commas
             if(gpsString[i] == ',') {
               commaPos[commaCount] = i;
               commaCount++;
             }
           }
-          locationString = gpsString.substring(commaPos[2]+1, commaPos[6]);
-          lastLocationString = locationString;
+          locationString = gpsString.substring(commaPos[2]+1, commaPos[6]); //extract latitude and longitude
+          lastLocationString = locationString;  //update location strings
           locationSet = true;
         }
         else {
@@ -642,7 +709,7 @@ int sendNotification(){
     delay(500);
     led(B, ON);
     retryCount++;
-    if(retryCount >= 10) {
+    if(retryCount >= 10) {  //up to 10 retries
       debugPort.println("Could not connect to Wi-Fi.");
       led(B, OFF);
       delay(300);
@@ -658,6 +725,7 @@ int sendNotification(){
     debugPort.print(".");
   }
   
+  //some flash sequence
   led(B, OFF);
   led(G, ON);
   delay(100);
@@ -677,10 +745,12 @@ int sendNotification(){
   
   WiFiClient client;
 
+  //connect to server
   debugPort.println("Connecting to pushing server: " + String(logServer));
   if (client.connect(logServer, 80)) {
     debugPort.println("Successfully connected");
     
+    //prepare message string
     String postStr = "devid=";
     postStr += String(deviceId);
     postStr += "&motion_count=";
@@ -711,6 +781,8 @@ int sendNotification(){
 
   client.stop();
   debugPort.println("Stopping the client");
+
+  //another flashing sequence
   led(B, ON);
   led(G, OFF);
   delay(300);
@@ -730,6 +802,7 @@ int sendNotification(){
 }
 
 //==============================================================================//
+//initializes GSM module
 
 int gsmInitialize() {
   int initStatus = -1;
@@ -1098,7 +1171,7 @@ String getGSMTime () {
 bool sendSMS(String smsString) {
   gsmCommand("AT+CMGF=1", "OK", 2000, 2); //Because we want to send the SMS in text mode
   delay(100);
-  gsmCommand("AT+CMGS=\"+919061712021\"", ">", 3000, 2); //send sms message, be careful need to add a country code before the cellphone number
+  gsmCommand("AT+CMGS=\"+919567205051\"", ">", 3000, 2); //send sms message, be careful need to add a country code before the cellphone number
   delay(100);
   gsmPort.print(smsString);//the content of the message
   gsmPort.write(26);//the ASCII code of the ctrl+z is 26
@@ -1125,77 +1198,6 @@ bool findInResponse (String s) {
     return true;
   else
     return false;
-}
-
-//==============================================================================//
-//extracts parameters from CRLF terminated strings
-//at command replies are terminated with  CRLF by default
-//eg. <CR><LF>100.10.55.111<CR><LF><CR><LF>OK<CR><LF>
-
-String* extractParameters (String inString) {
-  int inStringLength = inString.length();
-  int paramCount = 0;
-  int crCount = 0;  //CR of LF count
-  int paramPos = 1; //index to each parameter string. 1 is because 0th will be parameter count
-  String* paramArray; //to hold an array of strings
-
-  //first find the no. of parameters so that we can declare an array of strings to hold all parameters
-  for(int i = 0; i < inStringLength; i++) {  //gets the parameter count
-    if(inString[i] == CARRIAGE_RETURN) { //check for CR
-      if(crCount != 2)  //do not increment if two CRLF are found consecutively
-        crCount++;
-    }
-    else if(inString[i] == NEWLINE) { //TODO : this might be redundant
-      if(crCount != 2)  //do not increment if two CRLF are found consecutively
-        crCount++;
-    }
-    else {  //for all other chars
-      if(crCount == 2) {  //if preceded by CRLF
-        if(i > 3) { //do not increment if CRLF is at the start
-          paramCount++;
-        }
-        crCount = 0;  //reset
-      }
-    }
-    if((i == (inStringLength-1)) && (crCount == 2)) {  //if there is no more CRLF
-      paramCount++;
-    }
-  }
-
-  paramArray = new String[paramCount+1];  //parameter count + one for total no. of parameters
-  paramArray[0] = String(paramCount); //save the no. of parameters as string
-
-  crCount = 0;  //reset
-
-  for(int i = 0; i < inStringLength; i++) {  //fetch each parameter
-    if(inString[i] == CARRIAGE_RETURN) {  //check for CR
-      if(crCount != 2)  //do not increment if two CRLF are found consecutively
-        crCount++;
-    }
-    else if(inString[i] == NEWLINE) { //check for LF
-      if(crCount != 2)  //do not increment if two CRLF are found consecutively
-        crCount++;
-    }
-    else {  //for all other chars
-      if(crCount == 2) {  //if the char is preceded by CRLF
-        if(i > 3) { //do not increment if CRLF is at thr start
-          paramPos++; //increment otherwise
-        }
-        crCount = 0;
-      }
-      paramArray[paramPos] += inString[i];  //save the char to the string
-    }
-  }
-
-  // for(int i=0; i <= paramCount; i++) { //display all parameters
-  //   debugPort.print("Parameter ");
-  //   debugPort.print(i);
-  //   debugPort.print(" : ");
-  //   debugPort.println(paramArray[i]);
-  // }
-
-  //if paramCount is 0, then only a single string with value "0" will be returned
-  return paramArray;
 }
 
 //==============================================================================//
