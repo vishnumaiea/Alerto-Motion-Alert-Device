@@ -11,7 +11,7 @@
 //  Project page : https://www.hackster.io/vishnumaiea/f7323c                   //
 //  License : MIT                                                               //
 //                                                                              //
-//  Last Modified : 04:28 PM 28-03-2020, Saturday                               //
+//  Last Modified : 04:37 PM 28-03-2020, Saturday                               //
 //                                                                              //
 //==============================================================================//
 
@@ -450,46 +450,32 @@ void loop() {
 void IRAM_ATTR countUp() {
   pulseCountTotal++;
 
-  if(pulseCount == 0) { 
-    lastEvent = millis();
+  if(pulseCount == 0) {   //start of a new detection window
+    lastEvent = millis(); //save the starting point
   }
 
-  if((millis() - lastEvent) > TIME_WINDOW) {
-    pulseCount = 0;
+  if((millis() - lastEvent) > TIME_WINDOW) {  //if the detection window overruns
+    pulseCount = 0; //reset pulse count
     lastEvent = 0;
   }
-  else {
+  else {  //if the new pulse arrives withing the detection time window
     pulseCount++;
     
-    if(pulseCount >= PULSE_THRESHOLD) {
+    if(pulseCount >= PULSE_THRESHOLD) { //check how many pulses are detected within time window
       motionCount++;
       motionCountTotal++;
 
-      led(R, OFF);
+      led(R, OFF);  //blink the green LED
       led(G, ON);
-      unsigned long int startTime = millis();
+      unsigned long int startTime = millis(); //generate delay
       while((millis() - startTime) < 100) {
       }
       led(G, OFF);
       led(R, ON);
       debugPort.println(motionCount);
-      pulseCount = 0;
+      pulseCount = 0; //so that we can start a new detection window
     }
   }
-
-
-  // if(pulseCount < PULSE_THRESHOLD) {
-  //   if((elapsedTime - lastEvent) > TIME_WINDOW) { //compare that against last event time
-  //     motionCount++; //this is more like a motion count since we are not counting all the pulses
-  //     motionCountTotal++;  //historical count
-  //     pulseCount = 0;
-      
-  //     if(motionCount >= MOTION_THRESHOLD) {
-        
-        
-  //     }
-  //   }
-  // }
 }
 
 //==============================================================================//
