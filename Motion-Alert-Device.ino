@@ -1,17 +1,17 @@
 
 //==============================================================================//
 //                                                                              //
-//  Alerto! - Portable and Connected Motion Alert Device                         //
+//  Alerto! - Portable and Connected Motion Alert Device                        //
 //                                                                              //
 //  Filename : Motion-Alert-Device.ino                                          //
 //  Description : Arduino sketch file.                                          //
 //  Author : Vishnu M Aiea                                                      //
-//  Version : 1.0.1                                                             //
+//  Version : 1.0.2                                                             //
 //  Initial Release : - 04:17 PM 02-03-2020, Monday                             //
 //  Project page : https://www.hackster.io/vishnumaiea/f7323c                   //
 //  License : MIT                                                               //
 //                                                                              //
-//  Last Modified : 11:16 PM 17-02-2020, Monday                                 //
+//  Last Modified : 04:28 PM 28-03-2020, Saturday                               //
 //                                                                              //
 //==============================================================================//
 
@@ -31,6 +31,7 @@
 //defines
 
 #define TIME_WINDOW       1000  //time window within which multiple pulses are ignored
+#define PULSE_THRESHOLD   2     //how many pulses should be counted within the time window
 #define MOTION_THRESHOLD  20    //how many motion you want to detect before triggering notification event
 
 //serial ports
@@ -81,6 +82,8 @@
 
 uint32_t pulseCount = 0;  //all pulses coming out from PIR
 uint32_t pulseCountTotal = 0; //total pulses detected
+uint32_t motionCount = 0;  //all pulses coming out from PIR
+uint32_t motionCountTotal = 0; //total pulses detected
 uint32_t lastEvent = 0; //last time point a pulse was detected
 uint32_t elapsedTime = 0; //returned by millis()
 
@@ -93,8 +96,8 @@ const char* logServer = "api.pushingbox.com";
 //-----------------------------------------------------------------------------//
 //Wi-Fi credentials
 
-const char* ssid = "<Your Hostspot Name>";
-const char* password = "<Your Hotspot Password>";
+const char* ssid = "Magnimous";
+const char* password = "Magcompany1$";
 
 //-----------------------------------------------------------------------------//
 
@@ -222,9 +225,9 @@ void setup() {
 
   //attach interrupts
   attachInterrupt(PIR_PIN, countUp, RISING);  //isr is executed for all rising edge of pulses
-  attachInterrupt(SWITCH_PIN, switchInterrupt, CHANGE);
-  attachInterrupt(BATTERY_PIN, batteryInterrupt, CHANGE);
-  attachInterrupt(REED_PIN, reedInterrupt, CHANGE);
+  // attachInterrupt(SWITCH_PIN, switchInterrupt, CHANGE);
+  // attachInterrupt(BATTERY_PIN, batteryInterrupt, CHANGE);
+  // attachInterrupt(REED_PIN, reedInterrupt, CHANGE);
 }
 
 //==============================================================================//
@@ -232,7 +235,7 @@ void setup() {
 
 void loop() {
   //check if motion status is above the threshold
-  if(pulseCount >= MOTION_THRESHOLD) {
+  if(motionCount >= MOTION_THRESHOLD) {
       debugPort.println("Motion activity detected.");
       debugPort.print("Total Activity Detected : ");
       debugPort.println(pulseCountTotal);
@@ -257,7 +260,7 @@ void loop() {
         debugPort.println("Trying to send SMS..");
         smsNotification = true; //send sms if it was not
       }
-      pulseCount = 0; //reset pulse count so that we can count from fresh
+      motionCount = 0; //reset pulse count so that we can count from fresh
       attachInterrupt(PIR_PIN, countUp, RISING);  //re-attach interrupt
     }
     else {  //do nothing if notification are disabled
@@ -445,13 +448,48 @@ void loop() {
 //counts the pulses from PIR at every rising edge
 
 void IRAM_ATTR countUp() {
-  elapsedTime = millis(); //save the current elapsed time
-  if((elapsedTime - lastEvent) > TIME_WINDOW) { //compare that against last event time
-    pulseCount++; //this is more like a motion count since we are not counting all the pulses
-    pulseCountTotal++;  //hisstorical count
-    lastEvent = elapsedTime;  //save the time point of this trigger event
-    // debugPort.println(pulseCount);
+  pulseCountTotal++;
+
+  if(pulseCount == 0) { 
+    lastEvent = millis();
   }
+
+  if((millis() - lastEvent) > TIME_WINDOW) {
+    pulseCount = 0;
+    lastEvent = 0;
+  }
+  else {
+    pulseCount++;
+    
+    if(pulseCount >= PULSE_THRESHOLD) {
+      motionCount++;
+      motionCountTotal++;
+
+      led(R, OFF);
+      led(G, ON);
+      unsigned long int startTime = millis();
+      while((millis() - startTime) < 100) {
+      }
+      led(G, OFF);
+      led(R, ON);
+      debugPort.println(motionCount);
+      pulseCount = 0;
+    }
+  }
+
+
+  // if(pulseCount < PULSE_THRESHOLD) {
+  //   if((elapsedTime - lastEvent) > TIME_WINDOW) { //compare that against last event time
+  //     motionCount++; //this is more like a motion count since we are not counting all the pulses
+  //     motionCountTotal++;  //historical count
+  //     pulseCount = 0;
+      
+  //     if(motionCount >= MOTION_THRESHOLD) {
+        
+        
+  //     }
+  //   }
+  // }
 }
 
 //==============================================================================//
@@ -461,6 +499,10 @@ void IRAM_ATTR countUp() {
 
 void led(int color, int status) {
   if(enableGlobalLED) {
+    // ledArray[0] = 0;
+    // ledArray[1] = 0;
+    // ledArray[2] = 0;
+
     if(color == RGB) {
       ledArray[0] = status;
       ledArray[1] = status;
@@ -478,7 +520,8 @@ void led(int color, int status) {
       }
       return;
     }
-      if(digitalRead(LED_R_PIN) == HIGH) {
+
+    if(digitalRead(LED_R_PIN) == HIGH) {
       ledArray[0] = 0;
     }
     else {
@@ -548,7 +591,9 @@ void led(int color, int status) {
     }
   }
   else {
-    debugPort.println("Global LED notifications are disabled.");
+    if(status != OFF) {
+      debugPort.println("Global LED notifications are disabled.");
+    }
     digitalWrite(LED_R_PIN, HIGH);
     digitalWrite(LED_G_PIN, HIGH);
     digitalWrite(LED_B_PIN, HIGH);
@@ -584,13 +629,13 @@ void switchInterrupt() {
     debugPort.println("Switch turned ON.");
     if(digitalRead(BATTERY_PIN) == LOW) {  //if battery is present
       debugPort.println("LED is ON.");
-      led(R, ON); //turn on LED
       enableGlobalLED = true;
+      led(R, ON); //turn on LED
     }
     else {
       debugPort.println("No battery. LED is off.");
-      led(R, OFF); //else keep it off
       enableGlobalLED = false;
+      led(R, OFF); //else keep it off
     }
   }
   else {
@@ -699,15 +744,17 @@ void gpsTask(void* pvParameters) {
 //connects to Wi-Fi and sends notification to the phone
 
 int sendNotification(){
+  led(R, OFF);
+  delay(100);
   led(B, ON);
   debugPort.println("Connecting to Home Router SID: " + String(ssid));
   
   int retryCount = 0;
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
-    led(B, OFF);
-    delay(500);
     led(B, ON);
+    delay(500);
+    led(B, OFF);
     retryCount++;
     if(retryCount >= 10) {  //up to 10 retries
       debugPort.println("Could not connect to Wi-Fi.");
@@ -724,7 +771,7 @@ int sendNotification(){
     }
     debugPort.print(".");
   }
-  
+  delay(200);
   //some flash sequence
   led(B, OFF);
   led(G, ON);
@@ -797,6 +844,8 @@ int sendNotification(){
   delay(300);
   led(B, OFF);
   led(G, OFF);
+  delay(500);
+  led(R, ON);
 
   return 0;
 }
